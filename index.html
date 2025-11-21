@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Classroom Noise Tracker</title>
+  <script src="/_sdk/element_sdk.js"></script> 
+  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
+  
+  <style>
+    /* -------------------------- */
+    /* CSS STYLES        */
+    /* -------------------------- */
+    body {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Arial', sans-serif;
+      background-color: #f5f5f5; /* Default background */
+      color: #333333; /* Default text color */
+      overflow: hidden; /* Prevent scrolling */
+    }
+
+    html {
+      height: 100%;
+    }
+
+    .container {
+      text-align: center;
+      padding: 2rem;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    h1 {
+      margin-bottom: 1rem;
+      font-size: 2rem;
+      transition: color 0.3s;
+    }
+
+    .traffic-light {
+      background: #2c2c2c;
+      border-radius: 2rem;
+      padding: 1.5rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      display: inline-block;
+      margin: 2rem auto;
+    }
+
+    .light {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      margin: 1.5rem;
+      border: 4px solid #1a1a1a;
+      transition: all 0.3s ease;
+      box-shadow: inset 0 5px 15px rgba(0, 0, 0, 0.5);
+      opacity: 0.3; /* Lights are dim by default */
+    }
+
+    .light.active {
+      opacity: 1; /* Active light is bright */
+      box-shadow: 0 0 40px currentColor, inset 0 5px 15px rgba(255, 255, 255, 0.3);
+    }
+
+    /* Light Colors - Default (Dim) and Active (Bright) */
+    .red {
+      background: #4a0000;
+      color: #ff0000;
+    }
+    .red.active {
+      background: #ff0000;
+    }
+
+    .yellow {
+      background: #4a4000;
+      color: #ffcc00;
+    }
+    .yellow.active {
+      background: #ffcc00;
+    }
+
+    .green {
+      background: #004a00;
+      color: #00ff00;
+    }
+    .green.active {
+      background: #00ff00;
+    }
+
+    .status {
+      font-size: 1.5rem;
+      font-weight: bold;
+      margin-top: 1rem;
+      min-height: 2rem;
+      transition: color 0.3s;
+    }
+
+    .start-button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 1rem 2rem;
+      font-size: 1.2rem;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      margin-top: 1rem;
+      transition: background 0.3s ease;
+      font-weight: bold;
+    }
+
+    .start-button:hover {
+      background: #45a049;
+    }
+
+    .start-button:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
+    }
+
+    .info {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #666666;
+      min-height: 20px;
+    }
+  </style>
+ </head>
+ <body>
+  <div class="container">
+   <h1 id="title">Classroom Noise Tracker</h1>
+   <div class="traffic-light">
+    <div class="light red" id="red-light"></div>
+    <div class="light yellow" id="yellow-light"></div>
+    <div class="light green active" id="green-light"></div>
+   </div>
+   <div class="status" id="status">
+    Quiet 🤫
+   </div>
+   <button class="start-button" id="start-button">Start Tracking</button>
+   <div class="info" id="info">
+    Click the button to allow microphone access
+   </div>
+  </div>
+  
+  <script>
+    const defaultConfig = {
+      // Configuration values for the Canva Element SDK
+      background_color: "#f5f5f5",
+      text_color: "#333333",
+      title_text: "Classroom Noise Tracker",
+      quiet_label: "Quiet 🤫",
+      medium_label: "Getting Loud 🔊",
+      loud_label: "Too Loud! 📢",
+      font_family: "Arial",
+      font_size: 16
+    };
+
+    let audioContext = null;
+    let analyser = null;
+    let microphone = null;
+    let stream = null; 
+    let dataArray = null;
+    let isTracking = false;
+    let animationFrameId = null;
+
+    const redLight = document.getElementById('red-light');
+    const yellowLight = document.getElementById('yellow-light');
+    const greenLight = document.getElementById('green-light');
+    const statusText = document.getElementById('status');
+    const startButton = document.getElementById('start-button');
+    const infoText = document.getElementById('info');
+
+    function setLightState(level) {
+      redLight.classList.remove('active');
+      yellowLight.classList.remove('active');
+      greenLight.classList.remove('active');
+
+      const config = window.elementSdk?.config || defaultConfig;
+
+      if (level === 'red') {
+        redLight.classList.add('active');
+        statusText.textContent = config.loud_label;
+      } else if (level === 'yellow') {
+        yellowLight.classList.add('active');
+        statusText.textContent = config.medium_label;
+      } else {
+        greenLight.classList.add('active');
+        statusText.textContent = config.quiet_label;
+      }
+    }
+
+    async function startTracking() {
+      if (isTracking) return;
+
+      try {
+        startButton.disabled = true;
+        infoText.textContent = 'Requesting microphone access...';
+
+        // 1. Request Media Stream
+        // This is the function that triggers the browser's permission prompt.
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: true // Request audio input 
+        });
+
+        // 2. Initialize Audio Context
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        microphone = audioContext.createMediaStreamSource(stream);
+        
+        // 3. Configure Analyser for frequency data
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.3;
+        const bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        
+        // 4. Connect the microphone to the analyser node
+        microphone.connect(analyser);
+        
+        // 5. Update UI state
+        isTracking = true;
+        startButton.disabled = false;
+        startButton.textContent = 'Stop Tracking';
+        infoText.textContent = 'Listening to noise levels...';
+        
+        // 6. Start the noise monitoring loop
+        monitorNoise();
+      } catch (error) {
+        // Handle potential permission errors
+        startButton.disabled = false;
+        startButton.textContent = 'Start Tracking';
+        console.error('Microphone error:', error);
+        
+        if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+          infoText.textContent = '⚠️ Access Denied! Check your browser and the Canva design\'s iframe permissions.';
+        } else if (error.name === 'NotFoundError') {
+          infoText.textContent = '❌ No microphone found. Please connect one.';
+        } else {
+          infoText.textContent = `Error: ${error.message}. Try refreshing.`;
+        }
+        setLightState('green'); 
+      }
+    }
+
+    function stopTracking() {
+      if (!isTracking) return;
+
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      
+      // Stop the microphone stream tracks
+      if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+      }
+
+      // Close the AudioContext
+      if (audioContext) {
+        if (audioContext.state !== 'closed') {
+          audioContext.close().catch(e => console.error("Error closing AudioContext:", e));
+        }
+        audioContext = null;
+      }
+      
+      // Reset UI state
+      isTracking = false;
+      startButton.textContent = 'Start Tracking';
+      infoText.textContent = 'Click the button to allow microphone access';
+      setLightState('green');
+    }
+
+    function monitorNoise() {
+      if (!isTracking || !analyser) return;
+
+      analyser.getByteFrequencyData(dataArray);
+      
+      // Calculate Root Mean Square (RMS) to get an average loudness level
+      let sumOfSquares = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+          sumOfSquares += dataArray[i] * dataArray[i];
+      }
+      const rms = Math.sqrt(sumOfSquares / dataArray.length); 
+      
+      // --- NOISE LEVEL THRESHOLDS ---
+      // These thresholds (80 and 40) are normalized values and may need 
+      // slight adjustment based on your classroom's microphone.
+      
+      if (rms > 80) {
+        // Too Loud!
+        setLightState('red');
+      } else if (rms > 40) {
+        // Medium Level
+        setLightState('yellow');
+      } else {
+        // Quiet / Low Level
+        setLightState('green');
+      }
+
+      // Loop the function
+      animationFrameId = requestAnimationFrame(monitorNoise);
+    }
+
+    // Event listener for the start button
+    startButton.addEventListener('click', () => {
+      if (isTracking) {
+        stopTracking();
+      } else {
+        startTracking();
+      }
+    });
+
+    /* ----------------------------------------------------- */
+    /* Configuration/SDK Functions (for Canva integration) */
+    /* ----------------------------------------------------- */
+
+    async function onConfigChange(config) {
+      const titleElement = document.getElementById('title');
+      const body = document.body;
+      const statusElement = document.getElementById('status');
+      const startBtn = document.getElementById('start-button');
+
+      const baseSize = config.font_size || defaultConfig.font_size;
+      const fontFamily = config.font_family || defaultConfig.font_family;
+      const baseFontStack = 'Arial, sans-serif';
+
+      body.style.backgroundColor = config.background_color || defaultConfig.background_color;
+      body.style.color = config.text_color || defaultConfig.text_color;
+      body.style.fontFamily = `${fontFamily}, ${baseFontStack}`;
+
+      titleElement.textContent = config.title_text || defaultConfig.title_text;
+      titleElement.style.fontSize = `${baseSize * 2}px`;
+      titleElement.style.color = config.text_color || defaultConfig.text_color;
+
+      statusElement.style.fontSize = `${baseSize * 1.5}px`;
+      statusElement.style.color = config.text_color || defaultConfig.text_color;
+
+      startBtn.style.fontSize = `${baseSize * 1.2}px`;
+
+      infoText.style.fontSize = `${baseSize * 0.9}px`;
+
+      if (!isTracking) {
+        setLightState('green');
+      }
+    }
+
+    if (window.elementSdk) {
+      // Initialize SDK and handle property mapping for Canva editing panel
+      window.elementSdk.init({
+        defaultConfig,
+        onConfigChange,
+        mapToCapabilities: (config) => ({
+          recolorables: [
+            // Logic for background/text color changing in Canva
+            { get: () => config.background_color || defaultConfig.background_color, set: (value) => { window.elementSdk.config.background_color = value; window.elementSdk.setConfig({ background_color: value }); } },
+            { get: () => config.text_color || defaultConfig.text_color, set: (value) => { window.elementSdk.config.text_color = value; window.elementSdk.setConfig({ text_color: value }); } }
+          ],
+          borderables: [],
+          fontEditable: { get: () => config.font_family || defaultConfig.font_family, set: (value) => { window.elementSdk.config.font_family = value; window.elementSdk.setConfig({ font_family: value }); } },
+          fontSizeable: { get: () => config.font_size || defaultConfig.font_size, set: (value) => { window.elementSdk.config.font_size = value; window.elementSdk.setConfig({ font_size: value }); } }
+        }),
+        mapToEditPanelValues: (config) => new Map([
+          ["title_text", config.title_text || defaultConfig.title_text],
+          ["quiet_label", config.quiet_label || defaultConfig.quiet_label],
+          ["medium_label", config.medium_label || defaultConfig.medium_label],
+          ["loud_label", config.loud_label || defaultConfig.loud_label]
+        ])
+      });
+
+      onConfigChange(window.elementSdk.config);
+    } else {
+      // Run with defaults if not inside the SDK environment
+      onConfigChange(defaultConfig);
+    }
+  </script>
+ </body>
+</html>
